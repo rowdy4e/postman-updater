@@ -1,17 +1,22 @@
 #!/bin/bash
 
 # Postman Auto-Updater Script
-# Usage: update-postman [--force] [--version X.Y.Z]
+# Usage: update-postman [--force] [--version X.Y.Z] [--uninstall]
 
 set -euo pipefail
 
-LOG_FILE="$HOME/.postman-updater.log"
-ETAG_FILE="$HOME/.postman-updater.etag"
-POSTMAN_DIR="/opt/Postman"
+DATA_DIR="$HOME/.local/share/postman-updater"
+POSTMAN_DIR="$HOME/.local/opt/Postman"
+BIN_LINK="$HOME/.local/bin/postman"
+DESKTOP_FILE="$HOME/.local/share/applications/postman.desktop"
+
+LOG_FILE="$DATA_DIR/updater.log"
+ETAG_FILE="$DATA_DIR/etag"
+POSTMAN_PKG="$POSTMAN_DIR/app/resources/app/package.json"
+
 BASE_URL="https://dl.pstmn.io/download"
 DOWNLOAD_URL="$BASE_URL/latest/linux_64"
 TMP_DIR="/tmp/postman-update-$$"
-POSTMAN_PKG="$POSTMAN_DIR/app/resources/app/package.json"
 
 # --- Logging & notifications ---
 
@@ -35,6 +40,10 @@ cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
 # --- Helpers ---
+
+ensure_dirs() {
+    mkdir -p "$DATA_DIR" "$HOME/.local/opt" "$HOME/.local/bin" "$HOME/.local/share/applications"
+}
 
 get_current_version() {
     if [[ -f "$POSTMAN_PKG" ]]; then
@@ -108,37 +117,62 @@ install_postman() {
 
     # Backup
     if [[ -d "$POSTMAN_DIR" ]]; then
-        sudo mv "$POSTMAN_DIR" "$backup" || die "Backup failed"
+        mv "$POSTMAN_DIR" "$backup" || die "Backup failed"
     fi
 
-    # Extract
-    if ! sudo tar -xzf "$archive" -C /opt/; then
+    # Extract (tar extracts "Postman/" folder)
+    if ! tar -xzf "$archive" -C "$HOME/.local/opt/"; then
         log "Extract failed, rolling back..."
-        [[ -d "$backup" ]] && sudo mv "$backup" "$POSTMAN_DIR"
+        [[ -d "$backup" ]] && mv "$backup" "$POSTMAN_DIR"
         die "Extraction failed"
     fi
 
-    # Symlink
-    sudo ln -sf "$POSTMAN_DIR/Postman" /usr/bin/postman
+    # Symlink binary
+    ln -sf "$POSTMAN_DIR/Postman" "$BIN_LINK"
+
+    # Desktop entry
+    cat > "$DESKTOP_FILE" << DESKTOP
+[Desktop Entry]
+Name=Postman
+Comment=API Development Environment
+Exec=$POSTMAN_DIR/Postman %U
+Terminal=false
+Type=Application
+Icon=$POSTMAN_DIR/app/resources/app/assets/icon.png
+StartupWMClass=postman
+Categories=Development;
+DESKTOP
 
     # Cleanup old backups (keep 1)
-    ls -dt ${POSTMAN_DIR}.backup-* 2>/dev/null | tail -n +2 | xargs -r sudo rm -rf
+    ls -dt ${POSTMAN_DIR}.backup-* 2>/dev/null | tail -n +2 | xargs -r rm -rf || true
 
     log "Installation OK"
+}
+
+uninstall_postman() {
+    log "=== Uninstalling Postman ==="
+
+    rm -rf "$POSTMAN_DIR" ${POSTMAN_DIR}.backup-*
+    rm -f "$BIN_LINK" "$DESKTOP_FILE" "$ETAG_FILE"
+
+    log "Postman uninstalled"
+    notify "normal" "Postman Uninstalled" "Postman has been removed from this system"
 }
 
 # --- Main ---
 
 main() {
+    ensure_dirs
     log "=== Postman Auto-Updater ==="
     [[ "$EUID" -eq 0 ]] && die "Do not run as root"
 
     local force=false target_version=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --force)  force=true; log "Force mode" ;;
-            --version) target_version="$2"; shift ;;
-            *)        die "Unknown option: $1\nUsage: update-postman [--force] [--version X.Y.Z]" ;;
+            --force)     force=true; log "Force mode" ;;
+            --version)   target_version="$2"; shift ;;
+            --uninstall) uninstall_postman; exit 0 ;;
+            *)           die "Unknown option: $1\nUsage: update-postman [--force] [--version X.Y.Z] [--uninstall]" ;;
         esac
         shift
     done
@@ -166,7 +200,11 @@ main() {
         log "New version detected"
         notify "normal" "Updating Postman" "Current version: $current_version — downloading update..."
     else
-        notify "normal" "Updating Postman" "Force reinstalling (current: $current_version)..."
+        if [[ -n "$target_version" ]]; then
+            notify "normal" "Updating Postman" "Installing version $target_version (current: $current_version)..."
+        else
+            notify "normal" "Updating Postman" "Force reinstalling (current: $current_version)..."
+        fi
     fi
 
     # Download & install
