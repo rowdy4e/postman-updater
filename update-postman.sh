@@ -166,13 +166,14 @@ main() {
     log "=== Postman Auto-Updater ==="
     [[ "$EUID" -eq 0 ]] && die "Do not run as root"
 
-    local force=false target_version=""
+    local force=false target_version="" quiet=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --force)     force=true; log "Force mode" ;;
             --version)   target_version="$2"; shift ;;
+            --quiet)     quiet=true ;;
             --uninstall) uninstall_postman; exit 0 ;;
-            *)           die "Unknown option: $1\nUsage: update-postman [--force] [--version X.Y.Z] [--uninstall]" ;;
+            *)           die "Unknown option: $1\nUsage: update-postman [--force] [--version X.Y.Z] [--quiet] [--uninstall]" ;;
         esac
         shift
     done
@@ -194,7 +195,7 @@ main() {
     if ! $force; then
         if ! needs_update; then
             log "Already up to date (ETag match)"
-            notify "low" "Postman Up to Date" "Version $current_version — no update available"
+            $quiet || notify "low" "Postman Up to Date" "Version $current_version — no update available"
             exit 0
         fi
         log "New version detected"
