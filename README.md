@@ -1,42 +1,45 @@
 # Postman Linux Updater
 
-Automatic updater for [Postman](https://www.postman.com/) on Linux. Keeps your installation up to date with zero effort — just add it to your startup scripts.
+Automatic updater for [Postman](https://www.postman.com/) on Linux. Keeps your installation up to date — just add it to your startup scripts. Also works as a fresh installer if Postman isn't installed yet.
 
 ## Features
 
-- **Automatic update detection** — uses HTTP ETag headers to check for new versions without downloading anything
+- **Automatic update detection** — uses HTTP ETag headers to check for new versions without downloading
+- **Fresh install support** — installs Postman from scratch if not present
 - **Specific version install** — install any Postman version by number
-- **Desktop notifications** — shows system notifications for update status
-- **Safe updates** — backs up current installation before updating, with automatic rollback on failure
-- **Internet check** — verifies connectivity with retry logic before attempting download
-- **Startup-friendly** — designed to run silently at boot with a delay
+- **Desktop notifications** — system notifications for update status
+- **Safe updates** — backs up current installation, automatic rollback on failure
+- **Internet check** — verifies connectivity with retry logic
+- **Startup-friendly** — designed to run silently at boot
 - **Logging** — all actions logged to `~/.postman-updater.log`
 
 ## Requirements
 
 - Linux x64
 - `curl`, `tar`, `ping`
-- `notify-send` (usually pre-installed on GNOME/KDE/Cinnamon desktops)
-- `sudo` access to `/opt/Postman`
+- `notify-send` (pre-installed on GNOME/KDE/Cinnamon)
+- `sudo` access
 
 ## Installation
 
-### 1. Install the script
+```bash
+git clone https://github.com/YOUR_USER/postman-updater.git
+cd postman-updater
+sudo ./install.sh
+```
+
+### Manual install
 
 ```bash
 sudo cp update-postman.sh /usr/local/bin/update-postman
 sudo chmod +x /usr/local/bin/update-postman
 ```
 
-### 2. Configure passwordless sudo (optional, recommended for automation)
-
-Create `/etc/sudoers.d/postman-updater`:
+### Passwordless sudo (recommended for automation)
 
 ```bash
 sudo visudo -f /etc/sudoers.d/postman-updater
 ```
-
-Add the following (replace `your_username` with your actual username):
 
 ```
 your_username ALL=(ALL) NOPASSWD: /bin/mv /opt/Postman /opt/Postman.backup-*
@@ -46,16 +49,13 @@ your_username ALL=(ALL) NOPASSWD: /bin/ln -sf /opt/Postman/Postman /usr/bin/post
 your_username ALL=(ALL) NOPASSWD: /bin/rm -rf /opt/Postman.backup-*
 ```
 
-### 3. Add to startup (optional)
-
-Add to your startup scripts or `.bashrc`/`.profile`:
+### Add to startup (optional)
 
 ```bash
-# Update Postman 60 seconds after login
 (sleep 60 && update-postman) &
 ```
 
-Or create a desktop autostart entry at `~/.config/autostart/postman-updater.desktop`:
+Or `~/.config/autostart/postman-updater.desktop`:
 
 ```ini
 [Desktop Entry]
@@ -70,52 +70,40 @@ X-GNOME-Autostart-enabled=true
 ## Usage
 
 ```bash
-# Check for updates and install if available
-update-postman
-
-# Force reinstall latest version
-update-postman --force
-
-# Install a specific version
-update-postman --version 11.20.0
-
-# Combine flags
-update-postman --force --version 11.72.9
+update-postman                    # auto-update to latest
+update-postman --force            # force reinstall latest
+update-postman --version 11.20.0  # install specific version
 ```
-
-### Options
 
 | Option | Description |
 |---|---|
-| *(no options)* | Check for updates using ETag comparison, install if new version available |
-| `--force` | Skip ETag check and reinstall (useful if installation is corrupted) |
-| `--version X.Y.Z` | Install a specific Postman version (implies `--force`) |
+| *(none)* | Check ETag, install if new version available |
+| `--force` | Skip check and reinstall |
+| `--version X.Y.Z` | Install specific version (implies `--force`) |
 
 ## How it works
 
 1. **Internet check** — pings `1.1.1.1` or curls `dl.pstmn.io` (3 retries with backoff)
-2. **ETag comparison** — fetches HTTP headers from `dl.pstmn.io` and compares the ETag with the stored value in `~/.postman-updater.etag`
-3. **Download** — downloads the latest (or specified) `.tar.gz` from Postman's CDN
-4. **Backup** — moves current `/opt/Postman` to `/opt/Postman.backup-YYYYMMDD-HHMMSS`
-5. **Install** — extracts the archive to `/opt/` and creates symlink at `/usr/bin/postman`
+2. **ETag comparison** — compares HTTP ETag from server with stored value in `~/.postman-updater.etag`
+3. **Download** — downloads `.tar.gz` from Postman CDN
+4. **Backup** — moves `/opt/Postman` to `/opt/Postman.backup-YYYYMMDD-HHMMSS`
+5. **Install** — extracts to `/opt/`, creates symlink at `/usr/bin/postman`
 6. **Cleanup** — removes old backups (keeps 1), saves new ETag
-7. **Notify** — sends desktop notification with the result
+7. **Notify** — desktop notification with result
 
 ## Files
 
 | Path | Description |
 |---|---|
-| `/usr/local/bin/update-postman` | The updater script |
+| `/usr/local/bin/update-postman` | Updater script |
 | `~/.postman-updater.log` | Log file |
-| `~/.postman-updater.etag` | Stored ETag for update detection |
-| `/opt/Postman` | Postman installation directory |
-| `/opt/Postman.backup-*` | Backup of previous installation |
+| `~/.postman-updater.etag` | Stored ETag |
+| `/opt/Postman` | Installation directory |
 
 ## Uninstall
 
 ```bash
-sudo rm /usr/local/bin/update-postman
-sudo rm /etc/sudoers.d/postman-updater
+sudo rm /usr/local/bin/update-postman /etc/sudoers.d/postman-updater
 rm ~/.postman-updater.log ~/.postman-updater.etag
 ```
 
