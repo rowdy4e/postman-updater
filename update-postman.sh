@@ -47,7 +47,7 @@ ensure_dirs() {
 
 get_current_version() {
     if [[ -f "$POSTMAN_PKG" ]]; then
-        grep -m1 '"version"' "$POSTMAN_PKG" | sed 's/.*": "\(.*\)".*/\1/'
+        grep -oP '"version"\s*:\s*"\K[^"]+' "$POSTMAN_PKG" | head -1
     else
         echo "0.0.0"
     fi
