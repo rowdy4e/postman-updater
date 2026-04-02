@@ -575,7 +575,12 @@ main() {
 
     # Check if update is needed
     if ! $force; then
-        if ! needs_update; then
+        if [[ -n "$latest_version" && "$current_version" == "$latest_version" ]]; then
+            log "Already up to date (version match: $current_version)"
+            $quiet || notify "low" "Postman Up to Date" "Version $current_version — no update available"
+            exit 0
+        fi
+        if [[ -z "$latest_version" ]] && ! needs_update; then
             log "Already up to date (ETag match)"
             $quiet || notify "low" "Postman Up to Date" "Version $current_version — no update available"
             exit 0
