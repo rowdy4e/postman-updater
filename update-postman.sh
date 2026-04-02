@@ -564,6 +564,10 @@ main() {
             [[ -n "$latest_version" ]] && record_version "$latest_version"
             log "Latest available: ${latest_version:-unknown}"
         fi
+        # Use version-specific URL when we know the latest version
+        if [[ -n "$latest_version" ]]; then
+            DOWNLOAD_URL="$BASE_URL/version/$latest_version/linux_64"
+        fi
     fi
 
     # Skip ignored versions before downloading (unless --version was explicitly specified)
