@@ -12,10 +12,13 @@ DESKTOP_FILE="$HOME/.local/share/applications/postman.desktop"
 
 LOG_FILE="$DATA_DIR/updater.log"
 ETAG_FILE="$DATA_DIR/etag"
+IGNORED_VERSIONS_FILE="$DATA_DIR/ignored_versions"
+VERSION_HISTORY_FILE="$DATA_DIR/version_history"
 POSTMAN_PKG="$POSTMAN_DIR/app/resources/app/package.json"
 
 BASE_URL="https://dl.pstmn.io/download"
 DOWNLOAD_URL="$BASE_URL/latest/linux_64"
+CHANGELOG_URL="https://dl.pstmn.io/changelog?channel=stable&platform=linux&arch=64"
 TMP_DIR="/tmp/postman-update-$$"
 
 # --- Logging & notifications ---
@@ -51,6 +54,186 @@ get_current_version() {
     else
         echo "0.0.0"
     fi
+}
+
+is_version_ignored() {
+    local ver="$1"
+    [[ -f "$IGNORED_VERSIONS_FILE" ]] && grep -qxF "$ver" "$IGNORED_VERSIONS_FILE"
+}
+
+record_version() {
+    local ver="$1"
+    [[ -z "$ver" || "$ver" == "0.0.0" ]] && return
+    local tmp
+    tmp=$(mktemp)
+    { echo "$ver"; grep -vxF "$ver" "$VERSION_HISTORY_FILE" 2>/dev/null || true; } | head -20 > "$tmp"
+    mv "$tmp" "$VERSION_HISTORY_FILE"
+}
+
+# --- TUI multi-select (arrow keys + space to toggle) ---
+
+tui_multiselect() {
+    local prompt="$1" prechecked="$2"
+    shift 2
+    local -a items=("$@")
+    local count=${#items[@]}
+    [[ $count -eq 0 ]] && return 1
+
+    local cursor=0
+    local -a checked=()
+    for ((i=0; i<count; i++)); do checked+=("0"); done
+    for idx in $prechecked; do
+        (( idx >= 0 && idx < count )) && checked[$idx]=1
+    done
+
+    local max_vis
+    max_vis=$(( $(tput lines 2>/dev/tty || echo 20) - 6 ))
+    (( max_vis > count )) && max_vis=$count
+    (( max_vis < 3 )) && max_vis=3
+    local offset=0
+
+    local saved_tty
+    saved_tty=$(stty -g </dev/tty 2>/dev/null)
+    trap 'printf "\e[?25h" >/dev/tty 2>/dev/null; stty "'"$saved_tty"'" </dev/tty 2>/dev/null; exit 130' INT
+    printf '\e[?25l' >/dev/tty
+
+    # Reserve space, move back up, save position
+    local total=$((max_vis + 4))
+    for ((i=0; i<total; i++)); do printf '\n' >/dev/tty; done
+    printf '\e[%dA' "$total" >/dev/tty
+    printf '\e7' >/dev/tty
+
+    _tui_draw() {
+        printf '\e8\e[J' >/dev/tty
+        printf '  \e[1;36m%s\e[0m\n\n' "$prompt" >/dev/tty
+
+        (( cursor < offset )) && offset=$cursor
+        (( cursor >= offset + max_vis )) && offset=$((cursor - max_vis + 1))
+
+        for ((i=offset; i < offset + max_vis && i < count; i++)); do
+            local mark="\e[90m◻\e[0m" pfx="  " style=""
+            (( checked[i] )) && mark="\e[32m◼\e[0m"
+            if (( i == cursor )); then
+                pfx="\e[32m❯\e[0m" style="\e[1m"
+            fi
+            printf '  %b %b %b%s\e[0m\n' "$pfx" "$mark" "$style" "${items[$i]}" >/dev/tty
+        done
+
+        printf '\n  \e[90m↑↓ navigate · space select · enter confirm · q cancel\e[0m' >/dev/tty
+    }
+
+    _tui_draw
+
+    while true; do
+        local key
+        IFS= read -rsn1 key </dev/tty
+        case "$key" in
+            $'\e')
+                local seq
+                IFS= read -rsn2 -t 0.1 seq </dev/tty
+                case "$seq" in
+                    '[A') (( cursor > 0 )) && (( cursor-- )) ;;
+                    '[B') (( cursor < count - 1 )) && (( cursor++ )) ;;
+                esac
+                _tui_draw
+                ;;
+            ' ')
+                checked[$cursor]=$(( 1 - checked[cursor] ))
+                _tui_draw
+                ;;
+            ''|$'\r')
+                break
+                ;;
+            q)
+                printf '\e[?25h' >/dev/tty
+                stty "$saved_tty" </dev/tty 2>/dev/null
+                trap - INT
+                printf '\n\n  \e[33mCancelled\e[0m\n' >/dev/tty
+                return 1
+                ;;
+        esac
+    done
+
+    printf '\e[?25h' >/dev/tty
+    stty "$saved_tty" </dev/tty 2>/dev/null
+    trap - INT
+    printf '\n\n' >/dev/tty
+
+    local any=false
+    for ((i=0; i<count; i++)); do
+        if (( checked[i] )); then
+            echo "${items[$i]}"
+            any=true
+        fi
+    done
+
+    if ! $any; then
+        printf '  \e[33mNo versions selected\e[0m\n' >/dev/tty
+        return 1
+    fi
+}
+
+# --- Interactive ignore/unignore ---
+
+interactive_ignore() {
+    echo "Fetching available versions..."
+    local versions=()
+
+    local changelog
+    changelog=$(curl -sL --connect-timeout 10 --max-time 15 "$CHANGELOG_URL" 2>/dev/null)
+    if [[ -n "$changelog" ]]; then
+        mapfile -t versions < <(echo "$changelog" | grep -oP '"name"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -20)
+    fi
+
+    if [[ ${#versions[@]} -eq 0 ]]; then
+        echo "Could not fetch version list. Try: update-postman --ignore X.Y.Z"
+        return 1
+    fi
+
+    # Build labels & pre-check already-ignored
+    local labels=() prechecked=""
+    for ((i=0; i<${#versions[@]}; i++)); do
+        if grep -qxF "${versions[$i]}" "$IGNORED_VERSIONS_FILE" 2>/dev/null; then
+            labels+=("${versions[$i]}  \e[90m(already ignored)\e[0m")
+            prechecked+="$i "
+        else
+            labels+=("${versions[$i]}")
+        fi
+    done
+
+    local selected
+    selected=$(tui_multiselect "Which versions do you want to ignore?" "$prechecked" "${labels[@]}") || return 0
+
+    local added=0
+    while IFS= read -r item; do
+        local ver="${item%%  *}"
+        if ! grep -qxF "$ver" "$IGNORED_VERSIONS_FILE" 2>/dev/null; then
+            echo "$ver" >> "$IGNORED_VERSIONS_FILE"
+            printf '  \e[32m✓\e[0m %s added to ignore list\n' "$ver"
+            added=$((added + 1))
+        fi
+    done <<< "$selected"
+    if [[ $added -eq 0 ]]; then
+        echo "  No new versions ignored"
+    fi
+}
+
+interactive_unignore() {
+    if [[ ! -f "$IGNORED_VERSIONS_FILE" ]] || [[ ! -s "$IGNORED_VERSIONS_FILE" ]]; then
+        echo "No ignored versions"
+        return 0
+    fi
+
+    local versions=()
+    mapfile -t versions < "$IGNORED_VERSIONS_FILE"
+
+    local selected
+    selected=$(tui_multiselect "Which versions do you want to unignore?" "" "${versions[@]}") || return 0
+
+    while IFS= read -r ver; do
+        sed -i "/^$(sed 's/[.[\*^$]/\\&/g' <<< "$ver")$/d" "$IGNORED_VERSIONS_FILE"
+        printf '  \e[32m✓\e[0m %s removed from ignore list\n' "$ver"
+    done <<< "$selected"
 }
 
 get_remote_etag() {
@@ -173,7 +356,46 @@ main() {
             --version)   target_version="$2"; shift ;;
             --quiet)     quiet=true ;;
             --uninstall) uninstall_postman; exit 0 ;;
-            *)           die "Unknown option: $1\nUsage: update-postman [--force] [--version X.Y.Z] [--quiet] [--uninstall]" ;;
+            --list-ignored)
+                if [[ ! -f "$IGNORED_VERSIONS_FILE" ]] || [[ ! -s "$IGNORED_VERSIONS_FILE" ]]; then
+                    echo "No ignored versions"
+                else
+                    echo "Ignored versions:"
+                    cat "$IGNORED_VERSIONS_FILE"
+                fi
+                exit 0
+                ;;
+            --ignore)
+                if [[ -n "${2:-}" ]]; then
+                    local ignore_ver="$2"
+                    shift
+                    if grep -qxF "$ignore_ver" "$IGNORED_VERSIONS_FILE" 2>/dev/null; then
+                        echo "Version $ignore_ver is already in ignore list"
+                    else
+                        echo "$ignore_ver" >> "$IGNORED_VERSIONS_FILE"
+                        echo "Version $ignore_ver added to ignore list"
+                    fi
+                else
+                    interactive_ignore
+                fi
+                exit 0
+                ;;
+            --unignore)
+                if [[ -n "${2:-}" ]]; then
+                    local unignore_ver="$2"
+                    shift
+                    if grep -qxF "$unignore_ver" "$IGNORED_VERSIONS_FILE" 2>/dev/null; then
+                        sed -i "/^$(sed 's/[.[\*^$]/\\&/g' <<< "$unignore_ver")$/d" "$IGNORED_VERSIONS_FILE"
+                        echo "Version $unignore_ver removed from ignore list"
+                    else
+                        echo "Version $unignore_ver is not in ignore list"
+                    fi
+                else
+                    interactive_unignore
+                fi
+                exit 0
+                ;;
+            *)           die "Unknown option: $1\nUsage: update-postman [--force] [--version X.Y.Z] [--quiet] [--uninstall] [--ignore X.Y.Z] [--unignore X.Y.Z] [--list-ignored]" ;;
         esac
         shift
     done
@@ -190,6 +412,26 @@ main() {
     local current_version
     current_version=$(get_current_version)
     log "Installed: $current_version"
+    record_version "$current_version"
+
+    # Fetch latest version from changelog API (before downloading)
+    local latest_version=""
+    if [[ -z "$target_version" ]]; then
+        local changelog_json
+        changelog_json=$(curl -sL --connect-timeout 10 --max-time 15 "$CHANGELOG_URL" 2>/dev/null)
+        if [[ -n "$changelog_json" ]]; then
+            latest_version=$(echo "$changelog_json" | grep -oP '"name"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            [[ -n "$latest_version" ]] && record_version "$latest_version"
+            log "Latest available: ${latest_version:-unknown}"
+        fi
+    fi
+
+    # Skip ignored versions before downloading (unless --version was explicitly specified)
+    if [[ -z "$target_version" && -n "$latest_version" ]] && is_version_ignored "$latest_version"; then
+        log "Version $latest_version is in ignore list, skipping"
+        $quiet || notify "low" "Postman Update Skipped" "Version $latest_version is ignored — edit ~/.local/share/postman-updater/ignored_versions to change this"
+        exit 0
+    fi
 
     # Check if update is needed
     if ! $force; then
@@ -211,6 +453,7 @@ main() {
     # Download & install
     local archive
     archive=$(download_postman)
+
     install_postman "$archive"
 
     # Store ETag for next run

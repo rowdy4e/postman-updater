@@ -10,6 +10,7 @@ Automatic updater for [Postman](https://www.postman.com/) on Linux. Keeps your i
 - **Automatic update detection** — uses HTTP ETag headers to check for new versions without downloading
 - **Fresh install support** — installs Postman from scratch if not present
 - **Specific version install** — install any Postman version by number
+- **Skip versions** — ignore specific versions via `--ignore` or the `ignored_versions` config file
 - **Uninstall** — clean removal with `--uninstall`
 - **Desktop notifications** — system notifications for update status
 - **Safe updates** — backs up current installation, automatic rollback on failure
@@ -64,6 +65,7 @@ X-GNOME-Autostart-enabled=true
 update-postman                    # auto-update to latest
 update-postman --force            # force reinstall latest
 update-postman --version 11.20.0  # install specific version
+update-postman --ignore 11.20.0   # add version to ignore list
 update-postman --quiet            # skip "up to date" notification
 update-postman --uninstall        # remove Postman
 ```
@@ -73,8 +75,27 @@ update-postman --uninstall        # remove Postman
 | *(none)* | Check ETag, install if new version available |
 | `--force` | Skip check and reinstall |
 | `--version X.Y.Z` | Install specific version (implies `--force`) |
+| `--ignore X.Y.Z` | Add version to ignore list and exit |
+| `--unignore X.Y.Z` | Remove version from ignore list and exit |
+| `--list-ignored` | Show all ignored versions and exit |
 | `--quiet` | Skip "up to date" notification (updates/errors still notify) |
 | `--uninstall` | Remove Postman and all related files |
+
+### Ignoring versions
+
+To skip a specific version (e.g. wait for the next one):
+
+```bash
+update-postman --ignore 11.20.0
+```
+
+You can also edit the ignore list directly — one version per line:
+
+```bash
+nano ~/.local/share/postman-updater/ignored_versions
+```
+
+When a new version is detected and downloaded but found to be ignored, the ETag is saved so the archive isn't re-downloaded on subsequent runs. Using `--version X.Y.Z` always installs regardless of the ignore list.
 
 ## How it works
 
@@ -97,6 +118,7 @@ update-postman --uninstall        # remove Postman
 | `~/.local/share/applications/postman.desktop` | Desktop entry |
 | `~/.local/share/postman-updater/updater.log` | Log file |
 | `~/.local/share/postman-updater/etag` | Stored ETag |
+| `~/.local/share/postman-updater/ignored_versions` | Ignored versions (one per line) |
 
 ## Uninstall
 
