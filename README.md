@@ -65,7 +65,9 @@ X-GNOME-Autostart-enabled=true
 update-postman                    # auto-update to latest
 update-postman --force            # force reinstall latest
 update-postman --version 11.20.0  # install specific version
+update-postman --version          # interactively pick a version
 update-postman --ignore 11.20.0   # add version to ignore list
+update-postman --ignore           # interactively pick versions to ignore
 update-postman --quiet            # skip "up to date" notification
 update-postman --uninstall        # remove Postman
 ```
@@ -75,8 +77,11 @@ update-postman --uninstall        # remove Postman
 | *(none)* | Check ETag, install if new version available |
 | `--force` | Skip check and reinstall |
 | `--version X.Y.Z` | Install specific version (implies `--force`) |
+| `--version` | Interactively pick a version to install |
 | `--ignore X.Y.Z` | Add version to ignore list and exit |
+| `--ignore` | Interactively pick versions to ignore |
 | `--unignore X.Y.Z` | Remove version from ignore list and exit |
+| `--unignore` | Interactively pick versions to unignore |
 | `--list-ignored` | Show all ignored versions and exit |
 | `--quiet` | Skip "up to date" notification (updates/errors still notify) |
 | `--uninstall` | Remove Postman and all related files |
